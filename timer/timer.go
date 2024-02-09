@@ -2,39 +2,61 @@ package timer
 
 import "time"
 
-type TimerSubscriber interface {
-	OnTimer()
-}
-
 type Timer interface {
-	Subscribe(subscriber TimerSubscriber)
+	Periodic() Timer
+	Subscribe(subscriber func()) Timer
 	Start()
+	Stop()
 }
 
 func NewTimer(duration time.Duration) Timer {
 	return &timedTimer{
 		duration:    duration,
-		subscribers: make([]TimerSubscriber, 0),
+		periodic:    false,
+		ticker:      nil,
+		subscribers: make([]func(), 0),
 	}
 }
 
 type timedTimer struct {
 	duration    time.Duration
-	subscribers []TimerSubscriber
+	periodic    bool
+	ticker      *time.Ticker
+	stopChannel chan struct{}
+	subscribers []func()
 }
 
-func (t *timedTimer) Subscribe(subscriber TimerSubscriber) {
+func (t *timedTimer) Periodic() Timer {
+	t.periodic = true
+	return t
+}
+
+func (t *timedTimer) Subscribe(subscriber func()) Timer {
 	t.subscribers = append(t.subscribers, subscriber)
+	return t
 }
 
 func (t *timedTimer) Start() {
-	realTimer := time.NewTimer(t.duration)
+	t.ticker = time.NewTicker(t.duration)
+	t.stopChannel = make(chan struct{})
 	go func() {
-		<-realTimer.C
-		for _, subscriber := range t.subscribers {
-			subscriber.OnTimer()
+		for {
+			select {
+			case <-t.ticker.C:
+				for _, subscriber := range t.subscribers {
+					subscriber()
+				}
+				if !t.periodic {
+					t.Stop()
+				}
+			case <-t.stopChannel:
+				t.ticker.Stop()
+				return
+			}
 		}
-
-		realTimer.Stop()
 	}()
+}
+
+func (t *timedTimer) Stop() {
+	t.stopChannel <- struct{}{}
 }
